@@ -2,12 +2,11 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"github.com/joho/godotenv"
+	"log"
 	"log/slog"
 	"mybot/internal/adapters"
 	"mybot/internal/config"
-	"mybot/internal/usecases"
 	"os"
 	"os/signal"
 	"syscall"
@@ -40,18 +39,26 @@ func main() {
 		logger.Error("Ошибка загрузки конфигурации", "error", err)
 		os.Exit(1)
 	}
-	// Инициализация адаптора
-	telegramAdapter, err := adapters.NewTelegramAdapter(cfg.BotToken, cfg.ChatID)
+
+	registry := adapters.NewSessionRegistry(1000)
+
+	listener, err := adapters.NewTelegramListener(cfg.BotToken, registry)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Инициализация адаптора -1003439532972
+	telegramAdapter, err := adapters.NewTelegramAdapter(cfg.BotToken, registry)
 	if err != nil {
 		logger.Error("Не удалось инициализировать TelegramAdapter", "error", err)
 		os.Exit(1)
 	}
 
-	// Инициализация сервисов
-	sendQuoteService := usecases.NewSendQuoteService(telegramAdapter)
+	// Запускаем listener в отдельной горутине
+	go func() {
+		if err := listener.Start(ctx); err != nil {
+			log.Printf("Listener error: %v", err)
+		}
+	}()
 
-	err = sendQuoteService.SendQuote(ctx)
-	if err != nil {
-		fmt.Println(err)
-	}
 }

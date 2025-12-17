@@ -2,39 +2,47 @@ package adapters
 
 import (
 	"context"
+	"errors"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"log"
 )
+
+var ErrChatNotFound = errors.New("chat session not found or removed")
 
 // TelegramAdapter реализует интерфейс TelegramSender для отправки сообщений в Telegram.
 type TelegramAdapter struct {
-	bot    *tgbotapi.BotAPI
-	chatID int64
+	bot      *tgbotapi.BotAPI
+	registry *SessionRegistry
 }
 
-// NewTelegramAdapter создаёт новый экземпляр TelegramAdapter.
-// Принимает токен бота (botToken) и ID чата (chatID).
-// Возвращает ошибку, если не удалось инициализировать бота.
-func NewTelegramAdapter(botToken string, chatID int64) (*TelegramAdapter, error) {
-	// Создаём новый экземпляр BotAPI с использованием токена бота
+func NewTelegramAdapter(botToken string, registry *SessionRegistry) (*TelegramAdapter, error) {
 	bot, err := tgbotapi.NewBotAPI(botToken)
 	if err != nil {
-		// Если произошла ошибка при инициализации бота, возвращаем её
 		return nil, err
 	}
-	// Возвращаем инициализированный адаптер с ботом и ID чата
-	return &TelegramAdapter{bot: bot, chatID: chatID}, nil
+	return &TelegramAdapter{bot: bot, registry: registry}, nil
 }
 
-// SendMessage отправляет текстовое сообщение в Telegram-чат.
-// Принимает контекст (ctx) и текст сообщения (message).
-// Возвращает ошибку, если сообщение не удалось отправить.
-func (t *TelegramAdapter) SendMessage(ctx context.Context, message string) error {
-	// Создаём новое текстовое сообщение для отправки в указанный чат
-	msg := tgbotapi.NewMessage(t.chatID, message)
+// SendTo отправляет сообщение в чат по уникальному ключу сессии (например, "tg:-1001234567890")
+func (t *TelegramAdapter) SendTo(ctx context.Context, sessionKey, message string) error {
+	session, ok := t.registry.GetActive(sessionKey)
+	if !ok {
+		return ErrChatNotFound
+	}
 
-	// Отправляем сообщение через API Telegram
+	msg := tgbotapi.NewMessage(session.ChatID, message)
 	_, err := t.bot.Send(msg)
-
-	// Возвращаем ошибку, если отправка не удалась
 	return err
+}
+
+// SendToAll — для broadcast (например, alert во все группы)
+func (t *TelegramAdapter) SendToAll(ctx context.Context, message string) error {
+	sessions := t.registry.GetAllActive()
+	for key, session := range sessions {
+		if err := t.SendTo(ctx, key, message); err != nil {
+			log.Printf("⚠️ Не удалось отправить в %s (%d): %v", session.Title, session.ChatID, err)
+			continue
+		}
+	}
+	return nil
 }
