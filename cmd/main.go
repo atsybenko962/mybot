@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"github.com/joho/godotenv"
 	"log"
 	"log/slog"
 	"mybot/internal/adapters"
 	"mybot/internal/config"
+	"mybot/internal/factApi"
 	"os"
 	"os/signal"
 	"syscall"
@@ -47,7 +49,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Инициализация адаптора -1003439532972
+	// Инициализация адаптора
 	telegramAdapter, err := adapters.NewTelegramAdapter(cfg.BotToken, registry)
 	if err != nil {
 		logger.Error("Не удалось инициализировать TelegramAdapter", "error", err)
@@ -61,4 +63,12 @@ func main() {
 		}
 	}()
 
+	api := factApi.NewFactAPI()
+
+	fact, err := api.GetRandomFuct(ctx)
+	if err != nil {
+		logger.Error("Не удалось получть факт", "error", err)
+	}
+
+	fmt.Println(fact.Text)
 }
