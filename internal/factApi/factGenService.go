@@ -24,8 +24,9 @@ func NewFactAPI() *FactAPI {
 	}
 }
 
-func (f *FactAPI) GetRandomFuct(ctx context.Context) (*Fact, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET",
+// GetRandomFact получает случайный факт и переводит его на русский язык.
+func (f *FactAPI) GetRandomFact(ctx context.Context) (*Fact, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		"https://uselessfacts.jsph.pl/api/v2/facts/random", nil)
 	if err != nil {
 		return nil, errors.New("ошибка создания запроса")
@@ -49,7 +50,7 @@ func (f *FactAPI) GetRandomFuct(ctx context.Context) (*Fact, error) {
 	}
 
 	if factResponse.Text == "" {
-
+		return nil, errors.New("получен пустой факт")
 	}
 
 	t, err := translateENtoRU(factResponse.Text)

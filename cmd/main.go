@@ -2,13 +2,11 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"github.com/joho/godotenv"
 	"log"
 	"log/slog"
 	"mybot/internal/adapters"
 	"mybot/internal/config"
-	"mybot/internal/factApi"
 	"os"
 	"os/signal"
 	"syscall"
@@ -44,6 +42,11 @@ func main() {
 
 	registry := adapters.NewSessionRegistry(1000)
 
+	// Восстанавливаем сессии из файла (если был предыдущий запуск)
+	if err := registry.LoadFromFile(); err != nil {
+		logger.Error("Не удалось загрузить сохранённые сессии", "error", err)
+	}
+
 	listener, err := adapters.NewTelegramListener(cfg.BotToken, registry)
 	if err != nil {
 		log.Fatal(err)
@@ -55,6 +58,10 @@ func main() {
 		logger.Error("Не удалось инициализировать TelegramAdapter", "error", err)
 		os.Exit(1)
 	}
+	_ = telegramAdapter
+
+	// Запускаем воркеры фактов для уже известных сессий (после рестарта сервиса)
+	listener.StartWorkersForExistingSessions(ctx)
 
 	// Запускаем listener в отдельной горутине
 	go func() {
@@ -63,12 +70,7 @@ func main() {
 		}
 	}()
 
-	api := factApi.NewFactAPI()
-
-	fact, err := api.GetRandomFuct(ctx)
-	if err != nil {
-		logger.Error("Не удалось получть факт", "error", err)
-	}
-
-	fmt.Println(fact.Text)
+	// Блокируем main до получения сигнала завершения
+	<-ctx.Done()
+	logger.Info("Завершение работы бота по сигналу", "signal", ctx.Err())
 }

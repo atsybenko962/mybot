@@ -5,12 +5,16 @@ import (
 	"fmt"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"log"
+	"mybot/internal/factApi"
 	"time"
 )
+
+const defaultFactInterval = 30 * time.Second
 
 type TelegramListener struct {
 	bot      *tgbotapi.BotAPI
 	registry *SessionRegistry
+	ctx      context.Context
 }
 
 func NewTelegramListener(botToken string, registry *SessionRegistry) (*TelegramListener, error) {
@@ -23,6 +27,8 @@ func NewTelegramListener(botToken string, registry *SessionRegistry) (*TelegramL
 
 // Start начинает прослушивание событий (блокирующий вызов)
 func (l *TelegramListener) Start(ctx context.Context) error {
+	l.ctx = ctx
+
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 30
 	u.AllowedUpdates = []string{"my_chat_member"}
@@ -42,6 +48,16 @@ func (l *TelegramListener) Start(ctx context.Context) error {
 				l.handleMyChatMember(update.MyChatMember)
 			}
 		}
+	}
+}
+
+// StartWorkersForExistingSessions запускает воркеры фактов для уже известных активных сессий.
+func (l *TelegramListener) StartWorkersForExistingSessions(ctx context.Context) {
+	l.ctx = ctx
+
+	sessions := l.registry.GetAllActive()
+	for key, s := range sessions {
+		l.startFactsWorker(key, s.ChatID)
 	}
 }
 
@@ -72,8 +88,61 @@ func (l *TelegramListener) handleMyChatMember(update *tgbotapi.ChatMemberUpdated
 		msg.DisableWebPagePreview = true
 		_, _ = l.bot.Send(msg)
 
+		// Запускаем воркер, который периодически шлёт интересные факты
+		l.startFactsWorker(key, chat.ID)
+
 	// ❌ Бот удалён из чата
 	case newStatus == "left" || newStatus == "kicked":
-		l.registry.Remove(key)
+		l.registry.Remove(key) // Remove также остановит воркер
 	}
+}
+
+// startFactsWorker запускает воркер, который с заданной периодичностью присылает факт в чат.
+func (l *TelegramListener) startFactsWorker(sessionKey string, chatID int64) {
+	baseCtx := l.ctx
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+
+	ctx, cancel := context.WithCancel(baseCtx)
+	l.registry.AttachWorkerCancel(sessionKey, cancel)
+
+	client := factApi.NewFactAPI()
+
+	go func() {
+		log.Printf("▶️ Запуск воркера фактов для %s", sessionKey)
+
+		fact, err := client.GetRandomFact(ctx)
+		if err != nil {
+			log.Printf("⚠️ Не удалось получить факт для %s: %v", sessionKey, err)
+		}
+		text := "Интересный факт:\n" + fact.Text
+		msg := tgbotapi.NewMessage(chatID, text)
+		if _, err := l.bot.Send(msg); err != nil {
+			log.Printf("⚠️ Не удалось отправить факт в %s: %v", sessionKey, err)
+		}
+
+		ticker := time.NewTicker(defaultFactInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				log.Printf("⏹ Остановлен воркер фактов для %s", sessionKey)
+				return
+			case <-ticker.C:
+				fact, err := client.GetRandomFact(ctx)
+				if err != nil {
+					log.Printf("⚠️ Не удалось получить факт для %s: %v", sessionKey, err)
+					continue
+				}
+
+				text := "Интересный факт:\n" + fact.Text
+				msg := tgbotapi.NewMessage(chatID, text)
+				if _, err := l.bot.Send(msg); err != nil {
+					log.Printf("⚠️ Не удалось отправить факт в %s: %v", sessionKey, err)
+				}
+			}
+		}
+	}()
 }
